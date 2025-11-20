@@ -22,8 +22,11 @@ class MapboxGeocoder implements GeocoderInterface
             throw GeocodingException::noApiKey();
         }
 
+        // Ensure base_uri ends with / for proper path resolution
+        $baseUri = rtrim($config['url'], '/') . '/';
+
         $this->client = new Client([
-            'base_uri' => $config['url'],
+            'base_uri' => $baseUri,
             'timeout' => $config['timeout'] ?? 10,
         ]);
     }
@@ -40,8 +43,10 @@ class MapboxGeocoder implements GeocoderInterface
         }
 
         try {
-            $encodedAddress = urlencode($address);
-            $response = $this->client->get("/{$encodedAddress}.json", [
+            // URL encode the address for the path
+            $encodedAddress = rawurlencode($address);
+
+            $response = $this->client->get("{$encodedAddress}.json", [
                 'query' => [
                     'access_token' => $this->config['api_key'],
                     'limit' => 1,
@@ -86,7 +91,7 @@ class MapboxGeocoder implements GeocoderInterface
 
         try {
             // Mapbox reverse geocoding uses lng,lat format
-            $response = $this->client->get("/{$longitude},{$latitude}.json", [
+            $response = $this->client->get("{$longitude},{$latitude}.json", [
                 'query' => [
                     'access_token' => $this->config['api_key'],
                     'limit' => 1,
@@ -144,4 +149,3 @@ class MapboxGeocoder implements GeocoderInterface
         return "{$prefix}:mapbox:{$type}:" . md5($value);
     }
 }
-
