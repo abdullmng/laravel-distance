@@ -2,18 +2,15 @@
 
 namespace Abdullmng\Distance\Providers;
 
-use Abdullmng\Distance\Contracts\GeocoderInterface;
 use Abdullmng\Distance\DTOs\Coordinate;
+use Abdullmng\Distance\DTOs\StructuredAddress;
 use Abdullmng\Distance\Exceptions\GeocodingException;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use Illuminate\Support\Facades\Cache;
 
-class OpenCageGeocoder implements GeocoderInterface
+class OpenCageGeocoder extends AbstractGeocoder
 {
-    private Client $client;
-    private array $config;
-
     public function __construct(array $config)
     {
         $this->config = $config;
@@ -45,7 +42,6 @@ class OpenCageGeocoder implements GeocoderInterface
                     'q' => $address,
                     'key' => $this->config['api_key'],
                     'limit' => 1,
-                    'no_annotations' => 1,
                 ],
             ]);
 
@@ -58,10 +54,19 @@ class OpenCageGeocoder implements GeocoderInterface
             $result = $data['results'][0];
             $geometry = $result['geometry'];
 
+            // Calculate accuracy score
+            $accuracy = $this->calculateAccuracy($result, $address);
+
             $coordinate = new Coordinate(
                 latitude: (float) $geometry['lat'],
                 longitude: (float) $geometry['lng'],
-                formattedAddress: $result['formatted'] ?? null
+                formattedAddress: $result['formatted'] ?? null,
+                accuracy: $accuracy,
+                source: 'opencage',
+                metadata: [
+                    'confidence' => $result['confidence'] ?? null,
+                    'components' => $result['components'] ?? null,
+                ]
             );
 
             if ($this->isCacheEnabled()) {
@@ -72,6 +77,45 @@ class OpenCageGeocoder implements GeocoderInterface
         } catch (GuzzleException $e) {
             throw GeocodingException::apiError($e->getMessage());
         }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function geocodeStructured(StructuredAddress $address): ?Coordinate
+    {
+        // OpenCage doesn't have native structured geocoding, so we build a formatted query
+        $queryParts = array_filter([
+            $address->houseNumber ? "No. {$address->houseNumber}" : null,
+            $address->street,
+            $address->neighbourhood,
+            $address->suburb,
+            $address->city,
+            $address->state,
+            $address->postalCode,
+            $address->country,
+        ]);
+
+        $query = implode(', ', $queryParts);
+
+        $coordinate = $this->geocode($query);
+
+        if ($coordinate && $coordinate->accuracy !== null) {
+            // Boost accuracy for structured addresses
+            $structuredBonus = $address->getQualityScore() * 0.15;
+            $newAccuracy = min(1.0, $coordinate->accuracy + $structuredBonus);
+
+            return new Coordinate(
+                latitude: $coordinate->latitude,
+                longitude: $coordinate->longitude,
+                formattedAddress: $coordinate->formattedAddress,
+                accuracy: $newAccuracy,
+                source: $coordinate->source,
+                metadata: array_merge($coordinate->metadata ?? [], ['structured' => true])
+            );
+        }
+
+        return $coordinate;
     }
 
     /**
@@ -114,36 +158,43 @@ class OpenCageGeocoder implements GeocoderInterface
     }
 
     /**
-     * Check if caching is enabled.
+     * Calculate accuracy score for OpenCage result.
      *
-     * @return bool
+     * @param array $result
+     * @param string $originalAddress
+     * @return float
      */
-    private function isCacheEnabled(): bool
+    private function calculateAccuracy(array $result, string $originalAddress): float
     {
-        return config('distance.cache.enabled', true);
+        $score = 0.5; // Base score
+
+        // OpenCage provides confidence score (1-10)
+        if (isset($result['confidence'])) {
+            $score += ($result['confidence'] / 10) * 0.4;
+        }
+
+        // Check result type/category
+        $type = $result['components']['_type'] ?? '';
+        $typeAccuracy = $this->getTypeAccuracy($type);
+        $score += $typeAccuracy * 0.3;
+
+        // Check word matching
+        $matchAccuracy = $this->calculateMatchAccuracy($originalAddress, $result['formatted'] ?? '');
+        $score += $matchAccuracy * 0.3;
+
+        return max(0.0, min(1.0, $score));
     }
 
     /**
-     * Get cache duration in seconds.
-     *
-     * @return int
-     */
-    private function getCacheDuration(): int
-    {
-        return config('distance.cache.duration', 1440) * 60;
-    }
-
-    /**
-     * Generate cache key.
+     * Get cache key with provider prefix.
      *
      * @param string $type
      * @param string $value
      * @return string
      */
-    private function getCacheKey(string $type, string $value): string
+    protected function getCacheKey(string $type, string $value): string
     {
         $prefix = config('distance.cache.prefix', 'geocoding');
         return "{$prefix}:opencage:{$type}:" . md5($value);
     }
 }
-

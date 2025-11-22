@@ -2,18 +2,15 @@
 
 namespace Abdullmng\Distance\Providers;
 
-use Abdullmng\Distance\Contracts\GeocoderInterface;
 use Abdullmng\Distance\DTOs\Coordinate;
+use Abdullmng\Distance\DTOs\StructuredAddress;
 use Abdullmng\Distance\Exceptions\GeocodingException;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use Illuminate\Support\Facades\Cache;
 
-class MapboxGeocoder implements GeocoderInterface
+class MapboxGeocoder extends AbstractGeocoder
 {
-    private Client $client;
-    private array $config;
-
     public function __construct(array $config)
     {
         $this->config = $config;
@@ -62,10 +59,20 @@ class MapboxGeocoder implements GeocoderInterface
             $feature = $data['features'][0];
             $coordinates = $feature['geometry']['coordinates'];
 
+            // Calculate accuracy score
+            $accuracy = $this->calculateAccuracy($feature, $address);
+
             $coordinate = new Coordinate(
                 latitude: (float) $coordinates[1], // Mapbox returns [lng, lat]
                 longitude: (float) $coordinates[0],
-                formattedAddress: $feature['place_name'] ?? null
+                formattedAddress: $feature['place_name'] ?? null,
+                accuracy: $accuracy,
+                source: 'mapbox',
+                metadata: [
+                    'relevance' => $feature['relevance'] ?? null,
+                    'place_type' => $feature['place_type'] ?? null,
+                    'context' => $feature['context'] ?? null,
+                ]
             );
 
             if ($this->isCacheEnabled()) {
@@ -76,6 +83,45 @@ class MapboxGeocoder implements GeocoderInterface
         } catch (GuzzleException $e) {
             throw GeocodingException::apiError($e->getMessage());
         }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function geocodeStructured(StructuredAddress $address): ?Coordinate
+    {
+        // Mapbox doesn't have native structured geocoding, so we build a formatted query
+        $queryParts = array_filter([
+            $address->houseNumber ? "No. {$address->houseNumber}" : null,
+            $address->street,
+            $address->neighbourhood,
+            $address->suburb,
+            $address->city,
+            $address->state,
+            $address->postalCode,
+            $address->country,
+        ]);
+
+        $query = implode(', ', $queryParts);
+
+        $coordinate = $this->geocode($query);
+
+        if ($coordinate && $coordinate->accuracy !== null) {
+            // Boost accuracy for structured addresses
+            $structuredBonus = $address->getQualityScore() * 0.15;
+            $newAccuracy = min(1.0, $coordinate->accuracy + $structuredBonus);
+
+            return new Coordinate(
+                latitude: $coordinate->latitude,
+                longitude: $coordinate->longitude,
+                formattedAddress: $coordinate->formattedAddress,
+                accuracy: $newAccuracy,
+                source: $coordinate->source,
+                metadata: array_merge($coordinate->metadata ?? [], ['structured' => true])
+            );
+        }
+
+        return $coordinate;
     }
 
     /**
@@ -117,33 +163,44 @@ class MapboxGeocoder implements GeocoderInterface
     }
 
     /**
-     * Check if caching is enabled.
+     * Calculate accuracy score for Mapbox result.
      *
-     * @return bool
+     * @param array $feature
+     * @param string $originalAddress
+     * @return float
      */
-    private function isCacheEnabled(): bool
+    private function calculateAccuracy(array $feature, string $originalAddress): float
     {
-        return config('distance.cache.enabled', true);
+        $score = 0.5; // Base score
+
+        // Mapbox provides relevance score (0-1)
+        if (isset($feature['relevance'])) {
+            $score += $feature['relevance'] * 0.4;
+        }
+
+        // Check place type
+        $placeTypes = $feature['place_type'] ?? [];
+        if (!empty($placeTypes)) {
+            $type = $placeTypes[0];
+            $typeAccuracy = $this->getTypeAccuracy($type);
+            $score += $typeAccuracy * 0.3;
+        }
+
+        // Check word matching
+        $matchAccuracy = $this->calculateMatchAccuracy($originalAddress, $feature['place_name'] ?? '');
+        $score += $matchAccuracy * 0.3;
+
+        return max(0.0, min(1.0, $score));
     }
 
     /**
-     * Get cache duration in seconds.
-     *
-     * @return int
-     */
-    private function getCacheDuration(): int
-    {
-        return config('distance.cache.duration', 1440) * 60;
-    }
-
-    /**
-     * Generate cache key.
+     * Get cache key with provider prefix.
      *
      * @param string $type
      * @param string $value
      * @return string
      */
-    private function getCacheKey(string $type, string $value): string
+    protected function getCacheKey(string $type, string $value): string
     {
         $prefix = config('distance.cache.prefix', 'geocoding');
         return "{$prefix}:mapbox:{$type}:" . md5($value);
