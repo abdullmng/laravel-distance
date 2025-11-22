@@ -2,6 +2,18 @@
 
 All notable changes to `laravel-distance` will be documented in this file.
 
+## [1.2.1] - 2025-11-22
+
+### Fixed
+- **Complete Structured Geocoding Implementation** - All geocoding providers now properly implement `geocodeStructured()`
+  - Fixed `OpenCageGeocoder` to extend `AbstractGeocoder` and implement structured geocoding
+  - Fixed `MapboxGeocoder` to extend `AbstractGeocoder` and implement structured geocoding
+  - Fixed `GoogleMapsGeocoder` to extend `AbstractGeocoder` and implement structured geocoding
+  - Added provider-specific accuracy scoring algorithms for each geocoder
+  - Google Maps now uses native components API for structured geocoding (best accuracy)
+  - OpenCage and Mapbox build formatted queries from structured addresses
+  - All providers include accuracy boost for structured addresses (15-20%)
+
 ## [1.2.0] - 2025-11-22
 
 ### Added - Geocoding Accuracy Improvements
