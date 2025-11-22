@@ -5,7 +5,9 @@ A comprehensive Laravel package for calculating distances between locations with
 ## Features
 
 - 🌍 **Multiple Geocoding Providers**: Nominatim (OpenStreetMap), Google Maps, Mapbox, and OpenCage
-- 📏 **Accurate Distance Calculations**: Haversine and Vincenty formulas
+- 📏 **Accurate Distance Calculations**: Haversine and Vincenty formulas for straight-line distances
+- 🛣️ **Route-Based Distances**: Calculate actual driving/walking/cycling distances using road networks
+- ⏱️ **Travel Time Estimates**: Get estimated duration for routes
 - 🔄 **Flexible Input**: Accept addresses, coordinates, or coordinate strings
 - 📦 **Multiple Units**: Kilometers, miles, meters, and feet
 - 💾 **Built-in Caching**: Reduce API calls and improve performance
@@ -33,11 +35,14 @@ php artisan vendor:publish --tag=distance-config
 
 ## Configuration
 
-Configure your preferred geocoding provider in `.env`:
+Configure your preferred geocoding and routing providers in `.env`:
 
 ```env
-# Default provider (nominatim, google, mapbox, opencage)
+# Geocoding Provider (nominatim, google, mapbox, opencage)
 GEOCODING_PROVIDER=nominatim
+
+# Routing Provider (osrm, mapbox, google)
+ROUTING_PROVIDER=osrm
 
 # Google Maps API Key (if using Google)
 GOOGLE_MAPS_API_KEY=your-api-key
@@ -55,6 +60,9 @@ NOMINATIM_USER_AGENT=YourAppName/1.0
 # Default distance unit (kilometers, miles, meters, feet)
 DISTANCE_UNIT=kilometers
 
+# Default routing mode (driving, walking, cycling)
+ROUTING_MODE=driving
+
 # Cache settings
 GEOCODING_CACHE_ENABLED=true
 GEOCODING_CACHE_DURATION=1440
@@ -62,12 +70,12 @@ GEOCODING_CACHE_DURATION=1440
 
 ## Usage
 
-### Basic Distance Calculation
+### Straight-Line Distance Calculation
 
 ```php
 use Abdullmng\Distance\Facades\Distance;
 
-// Calculate distance between two addresses
+// Calculate straight-line distance between two addresses
 $result = Distance::between(
     'New York, NY',
     'Los Angeles, CA'
@@ -76,6 +84,47 @@ $result = Distance::between(
 echo $result->distance; // Distance in default unit (km)
 echo $result->inMiles(); // Convert to miles
 echo $result->inMeters(); // Convert to meters
+```
+
+### Route-Based Distance Calculation
+
+```php
+// Calculate actual driving distance using road networks
+$route = Distance::route(
+    'Lagos, Nigeria',
+    'Abuja, Nigeria'
+);
+
+echo $route->distance; // Distance in default unit (km)
+echo $route->duration; // Duration in seconds
+echo $route->formattedDuration(); // e.g., "6h 30m"
+echo $route->inMiles(); // Convert to miles
+```
+
+### Comparing Straight-Line vs Route Distance
+
+```php
+// Straight-line (as the crow flies)
+$straightLine = Distance::between('Lagos', 'Abuja');
+echo "Straight-line: {$straightLine->inKilometers()} km\n";
+
+// Route-based (actual driving distance)
+$route = Distance::route('Lagos', 'Abuja');
+echo "Route: {$route->inKilometers()} km\n";
+echo "Duration: {$route->formattedDuration()}\n";
+```
+
+### Different Travel Modes
+
+```php
+// Driving (default)
+$driving = Distance::route($from, $to, ['mode' => 'driving']);
+
+// Walking
+$walking = Distance::route($from, $to, ['mode' => 'walking']);
+
+// Cycling
+$cycling = Distance::route($from, $to, ['mode' => 'cycling']);
 ```
 
 ### Using Coordinates
@@ -87,7 +136,11 @@ use Abdullmng\Distance\DTOs\Coordinate;
 $from = new Coordinate(40.7128, -74.0060); // New York
 $to = new Coordinate(34.0522, -118.2437); // Los Angeles
 
+// Straight-line distance
 $result = Distance::between($from, $to);
+
+// Route distance
+$route = Distance::route($from, $to);
 ```
 
 ### Using Coordinate Strings
@@ -113,15 +166,60 @@ $result = Distance::unit('miles')->between('New York, NY', 'Los Angeles, CA');
 ### Geocoding
 
 ```php
-// Geocode an address
+// Simple geocoding
 $coordinate = Distance::geocode('1600 Amphitheatre Parkway, Mountain View, CA');
 echo $coordinate->latitude;
 echo $coordinate->longitude;
 echo $coordinate->formattedAddress;
+echo $coordinate->accuracy; // Quality score (0-1)
+echo $coordinate->source; // Which provider was used
 
 // Reverse geocode
 $address = Distance::reverse(37.4224764, -122.0842499);
 echo $address; // "1600 Amphitheatre Parkway, Mountain View, CA..."
+```
+
+### Structured Geocoding (Improved Accuracy)
+
+For better accuracy, especially in developing countries, use structured geocoding:
+
+```php
+use Abdullmng\Distance\DTOs\StructuredAddress;
+
+$address = new StructuredAddress(
+    houseNumber: '24',
+    street: 'Obi Okosi Street',
+    neighbourhood: 'Hill-Side Estate',
+    suburb: 'Gwarimpa',
+    city: 'Abuja',
+    country: 'Nigeria'
+);
+
+$coordinate = Distance::geocodeStructured($address);
+
+if ($coordinate->isHighAccuracy()) {
+    echo "High quality result!\n";
+    echo "Coordinates: {$coordinate->latitude}, {$coordinate->longitude}\n";
+}
+```
+
+### Geocoding Quality Scores
+
+All geocoding results include accuracy scores to help you make informed decisions:
+
+```php
+$coordinate = Distance::geocode('Gwarimpa, Abuja, Nigeria');
+
+if ($coordinate->isHighAccuracy()) {
+    // accuracy >= 0.8 - Safe to use
+    echo "High quality result\n";
+} elseif ($coordinate->isLowAccuracy()) {
+    // accuracy < 0.5 - May be inaccurate
+    echo "Low quality - consider structured geocoding\n";
+} else {
+    // 0.5 <= accuracy < 0.8 - Moderate quality
+    echo "Moderate quality\n";
+}
 ```
 
 ### Bearing and Direction
@@ -164,6 +262,58 @@ echo $result->inFeet();
 // Get as array
 $array = $result->toArray();
 ```
+
+## Advanced Geocoding Features
+
+### Fallback Chain
+
+Automatically try multiple geocoding providers until you get a high-quality result:
+
+```env
+GEOCODING_USE_FALLBACK=true
+GEOCODING_MIN_ACCURACY=0.7
+```
+
+```php
+// config/distance.php
+'use_fallback_chain' => true,
+'fallback_providers' => [
+    'nominatim',  // Try free provider first
+    'opencage',   // Then OpenCage
+    'mapbox',     // Then Mapbox
+    'google',     // Last resort (most expensive)
+],
+'minimum_accuracy' => 0.7,
+```
+
+### Local Coordinate Cache
+
+Cache frequently used addresses for instant, 100% accurate results:
+
+```php
+// config/distance.php
+'local_coordinates' => [
+    'Main Warehouse Lagos' => [
+        'lat' => 6.5244,
+        'lon' => 3.3792,
+        'formatted' => 'Main Warehouse, Apapa, Lagos, Nigeria'
+    ],
+    'Office Abuja' => [
+        'lat' => 9.0765,
+        'lon' => 7.3986,
+        'formatted' => 'Head Office, Abuja, Nigeria'
+    ],
+],
+```
+
+```php
+// Checks local cache first (instant, no API calls)
+$coordinate = Distance::geocode('Main Warehouse Lagos');
+echo $coordinate->source; // 'local_cache'
+echo $coordinate->accuracy; // 1.0 (100%)
+```
+
+For more details, see [GEOCODING_ACCURACY.md](GEOCODING_ACCURACY.md).
 
 ## Geocoding Providers
 
@@ -244,6 +394,13 @@ foreach ($stores as $store) {
 
 $nearestStores = $stores->sortBy('distance')->take(5);
 ```
+
+## Documentation
+
+- [Routing Guide](ROUTING.md) - Comprehensive guide for route-based distance calculations
+- [Mapbox Geocoding Guide](MAPBOX_GEOCODING.md) - Mapbox geocoding setup and troubleshooting
+- [Quick Start Guide](QUICKSTART.md) - Get started quickly with examples
+- [Contributing Guide](CONTRIBUTING.md) - How to contribute to this package
 
 ## Testing
 

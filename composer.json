@@ -1,15 +1,18 @@
 {
     "name": "abdullmng/laravel-distance",
-    "description": "Calculate distance between addresses or coordinates with built-in geocoding",
+    "description": "Calculate straight-line and route-based distances between addresses or coordinates with built-in geocoding and routing",
     "keywords": [
         "laravel",
         "distance",
         "geolocation",
         "geocoding",
+        "routing",
         "logistics",
+        "ride-sharing",
+        "delivery",
         "addresses"
     ],
-    "version": "1.0.2",
+    "version": "1.2.0",
     "type": "library",
     "license": "MIT",
     "authors": [

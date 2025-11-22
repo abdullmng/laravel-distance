@@ -3,20 +3,28 @@
 namespace Abdullmng\Distance;
 
 use Abdullmng\Distance\Contracts\GeocoderInterface;
+use Abdullmng\Distance\Contracts\RoutingInterface;
 use Abdullmng\Distance\DTOs\Coordinate;
 use Abdullmng\Distance\DTOs\DistanceResult;
+use Abdullmng\Distance\DTOs\RouteResult;
 use Abdullmng\Distance\Services\DistanceCalculator;
 
 class Distance
 {
     private GeocoderInterface $geocoder;
     private DistanceCalculator $calculator;
+    private RoutingInterface $router;
     private string $unit;
 
-    public function __construct(GeocoderInterface $geocoder, DistanceCalculator $calculator, string $unit = 'kilometers')
-    {
+    public function __construct(
+        GeocoderInterface $geocoder,
+        DistanceCalculator $calculator,
+        RoutingInterface $router,
+        string $unit = 'kilometers'
+    ) {
         $this->geocoder = $geocoder;
         $this->calculator = $calculator;
+        $this->router = $router;
         $this->unit = $unit;
     }
 
@@ -70,6 +78,17 @@ class Distance
     }
 
     /**
+     * Geocode a structured address to coordinates.
+     *
+     * @param \Abdullmng\Distance\DTOs\StructuredAddress $address
+     * @return Coordinate|null
+     */
+    public function geocodeStructured(\Abdullmng\Distance\DTOs\StructuredAddress $address): ?Coordinate
+    {
+        return $this->geocoder->geocodeStructured($address);
+    }
+
+    /**
      * Reverse geocode coordinates to an address.
      *
      * @param float $latitude
@@ -110,6 +129,27 @@ class Distance
     }
 
     /**
+     * Calculate route-based distance between two locations.
+     *
+     * @param string|Coordinate $from
+     * @param string|Coordinate $to
+     * @param array $options Additional options (e.g., mode: driving, walking, cycling)
+     * @return RouteResult
+     */
+    public function route($from, $to, array $options = []): RouteResult
+    {
+        $fromCoordinate = $this->resolveCoordinate($from);
+        $toCoordinate = $this->resolveCoordinate($to);
+
+        // Merge with default routing mode from config
+        if (!isset($options['mode'])) {
+            $options['mode'] = config('distance.routing_mode', 'driving');
+        }
+
+        return $this->router->route($fromCoordinate, $toCoordinate, $options);
+    }
+
+    /**
      * Set the default unit for distance calculations.
      *
      * @param string $unit
@@ -146,4 +186,3 @@ class Distance
         throw new \InvalidArgumentException('Location must be a string address, coordinate string, or Coordinate object');
     }
 }
-

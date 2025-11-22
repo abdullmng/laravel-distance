@@ -7,7 +7,10 @@ class Coordinate
     public function __construct(
         public readonly float $latitude,
         public readonly float $longitude,
-        public readonly ?string $formattedAddress = null
+        public readonly ?string $formattedAddress = null,
+        public readonly ?float $accuracy = null, // Geocoding accuracy/quality score (0-1, 1 = highest)
+        public readonly ?string $source = null, // Which geocoder provided this coordinate
+        public readonly ?array $metadata = null // Additional metadata from geocoder
     ) {
         $this->validate();
     }
@@ -39,8 +42,31 @@ class Coordinate
         return new self(
             latitude: $data['latitude'] ?? $data['lat'],
             longitude: $data['longitude'] ?? $data['lng'] ?? $data['lon'],
-            formattedAddress: $data['formatted_address'] ?? $data['address'] ?? null
+            formattedAddress: $data['formatted_address'] ?? $data['address'] ?? null,
+            accuracy: $data['accuracy'] ?? null,
+            source: $data['source'] ?? null,
+            metadata: $data['metadata'] ?? null
         );
+    }
+
+    /**
+     * Check if this coordinate has high accuracy.
+     *
+     * @return bool
+     */
+    public function isHighAccuracy(): bool
+    {
+        return $this->accuracy !== null && $this->accuracy >= 0.8;
+    }
+
+    /**
+     * Check if this coordinate has low accuracy.
+     *
+     * @return bool
+     */
+    public function isLowAccuracy(): bool
+    {
+        return $this->accuracy !== null && $this->accuracy < 0.5;
     }
 
     /**
@@ -54,6 +80,9 @@ class Coordinate
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,
             'formatted_address' => $this->formattedAddress,
+            'accuracy' => $this->accuracy,
+            'source' => $this->source,
+            'metadata' => $this->metadata,
         ];
     }
 
@@ -67,4 +96,3 @@ class Coordinate
         return "{$this->latitude},{$this->longitude}";
     }
 }
-
